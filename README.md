@@ -14,8 +14,9 @@ day26-mcp/
 │   ├── README.md
 │   └── weather_function_calling.py
 │
-├── 02-mcp-basics/           ← Bước 2: MCP server + client (không cần API key)
+├── 02-mcp-basics/           ← Bước 2: MCP server + client (weather API thật)
 │   ├── README.md
+│   ├── weather_api.py
 │   ├── weather_server.py
 │   └── weather_client.py
 │
@@ -34,8 +35,10 @@ day26-mcp/
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# MCP demo (không cần API key)
-cd 02-mcp-basics && python weather_client.py
+# MCP chatbot (Gemini chọn tool, server gọi WeatherAPI)
+cd 02-mcp-basics
+cp .env.example .env  # điền GEMINI_API_KEY và WEATHER_API_KEY
+python weather_client.py
 
 # Function Calling (cần Gemini và WeatherAPI.com API key)
 cd 01-function-calling

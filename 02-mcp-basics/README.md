@@ -1,46 +1,69 @@
-# 02 — MCP Basics (Server + Client)
+# 02 — MCP Basics (Server + Client, dữ liệu thời tiết thật)
 
-Cùng tool `get_weather`, nhưng giờ tách ra **MCP server độc lập**. Server tự công bố
-tool qua giao thức MCP; bất kỳ client nào (Claude Code, Cursor, hoặc `weather_client.py`)
-cũng cắm vào dùng được — không cần biết code bên trong.
+Hai tool `get_weather` và `get_weather_forecast` nằm trong **MCP server độc lập**.
+Server tự công bố schema qua giao thức MCP; bất kỳ client nào cũng có thể khám phá
+và gọi tool mà không cần biết code provider bên trong.
 
 ```
-weather_client.py                       weather_server.py
-┌─────────────┐    giao thức MCP    ┌─────────────────┐
-│  list_tools │ ──────────────────▶ │ @mcp.tool()     │
-│  call_tool  │ ◀────────────────── │ get_weather()   │
-└─────────────┘     stdio           └─────────────────┘
+User input → Gemini chọn tool → MCP client ──stdio──▶ MCP weather server
+                 ▲                                      │
+                 └──────── JSON current/forecast ◀──────┘
 ```
 
-## Cách chạy (không cần API key)
+Server định vị địa danh bằng Open-Meteo Geocoding (`country_code=VN`), sau đó
+gọi WeatherAPI.com bằng tọa độ. Cách này tránh lỗi fuzzy-match tên tiếng Việt
+như `Hà Nội` bị trả về một địa danh khác.
+
+## Cách chạy
 
 ```bash
 pip install -r ../requirements.txt
+cp .env.example .env
+# Điền GEMINI_API_KEY và WEATHER_API_KEY vào .env
 python weather_client.py     # client tự khởi động weather_server.py
 ```
 
-Kết quả mong đợi:
+CLI dùng `GEMINI_API_KEY` để hiểu câu hỏi tự nhiên và chọn MCP tool. Server dùng
+`WEATHER_API_KEY` để lấy dữ liệu thật. `.env` đã được Git bỏ qua. Server cũng hạ
+log HTTP client xuống `WARNING` vì WeatherAPI xác thực qua query string; không
+bật DEBUG/INFO request logging nếu chưa có cơ chế redaction secret.
+
+Khi khởi động, chatbot tự khám phá tool, chào người dùng và giới thiệu khả năng:
 
 ```
-Tools server cung cấp:
-  - get_weather: Lấy thời tiết hiện tại của một thành phố.
+🤖 Xin chào! Tôi là trợ lý thời tiết Việt Nam.
+Tôi hiện có thể hỗ trợ các tác vụ sau:
+  • Lấy thời tiết hiện tại, realtime... (`get_weather`)
+  • Dự báo thời tiết 1-14 ngày... (`get_weather_forecast`)
 
-call_tool get_weather(city='Hanoi'):
-  -> Hanoi: 29°C, trời mưa
-
-call_tool get_weather(city='Danang'):
-  -> Danang: 30°C, nhiều mây
-
-call_tool get_weather(city='Haiphong'):
-  -> Haiphong: 33°C, mưa rào
+Bạn: Dự báo Đà Nẵng 3 ngày tới và cho tôi lời khuyên.
+Trợ lý: ...
 ```
+
+Chatbot tiếp tục nhận câu hỏi cho đến khi người dùng gõ `thoát`, `exit`, `quit`
+hoặc nhấn `Ctrl+C`. Gõ `/tools` hay `/help` để xem lại khả năng.
 
 ## Files
 
 | File | Mô tả |
 |---|---|
-| `weather_server.py` | MCP server — `@mcp.tool()` tự sinh schema từ type hints + docstring |
-| `weather_client.py` | MCP client — `list_tools` + `call_tool` qua stdio transport |
+| `weather_server.py` | MCP server công bố hai tool, schema tự sinh từ type hints/docstring |
+| `weather_api.py` | Định vị Việt Nam, gọi current/forecast API và chuẩn hóa JSON |
+| `weather_client.py` | CLI chatbot Gemini, tự khám phá/chọn/gọi MCP tool qua stdio |
+| `.env.example` | Mẫu `GEMINI_API_KEY` và `WEATHER_API_KEY`, không chứa secret thật |
+
+## Hai tool thời tiết
+
+### `get_weather(city)`
+
+Trả thời tiết hiện tại gồm thời điểm cập nhật, nhiệt độ/cảm giác như, tình
+trạng, độ ẩm, lượng mưa, mây, gió và UV.
+
+### `get_weather_forecast(city, days=3)`
+
+Trả dự báo từ 1–14 ngày. Mỗi ngày gồm nhiệt độ thấp nhất/cao nhất/trung bình,
+xác suất và tổng lượng mưa, độ ẩm, gió tối đa, UV, giờ mặt trời mọc/lặn. Số
+ngày thực tế khả dụng còn phụ thuộc gói WeatherAPI.com.
 
 ---
 
@@ -80,7 +103,8 @@ Bước 1 — KHÁM PHÁ: "Anh có tool gì?"
     │                               │
     │── "list_tools()" ───────────▶ │
     │                               │  Server tự trả lời:
-    │                               │  "Tôi có get_weather(city: str)"
+    │                               │  "Tôi có get_weather(city: str),"
+    │                               │  "get_weather_forecast(city, days)"
     │◀── [{name, description,  ──── │  Schema SINH TỰ ĐỘNG
     │      parameters}]             │  từ type hints + docstring
     │                               │
@@ -98,8 +122,8 @@ Bước 2 — GỌI TOOL: "Cho tôi thời tiết HN"
     │── call_tool("get_weather", ─▶ │
     │    {"city": "Hanoi"})         │
     │                               │  SERVER thực thi hàm
-    │                               │  get_weather("Hanoi")
-    │◀── "Hanoi: 29°C, mưa" ──────  │
+    │                               │  get_weather("Hà Nội")
+    │◀── JSON realtime ───────────── │
     │                               │
 
   So sánh Function Calling:
@@ -133,9 +157,9 @@ Function Calling (01):                    MCP (02):
 30 dòng schema viết tay                   4 dòng, tự sinh schema
 
 types.FunctionDeclaration(                @mcp.tool()
-  name="get_weather",                     def get_weather(city: str) -> str:
+  name="get_weather",                     def get_weather(city: str) -> dict:
   description="Lấy thời tiết...",             """Lấy thời tiết..."""
-  parameters=types.Schema(                    return f"{city}: 29°C"
+  parameters=types.Schema(                    return get_current_weather_data(city)
     type=types.Type.OBJECT,
     properties={                           ✅ Schema tự sinh từ:
       "city": types.Schema(                   city: str    → type: string
@@ -198,7 +222,7 @@ Function Calling:                          MCP:
 
 ## MCP trong thực tế: kết hợp với LLM
 
-Ví dụ trên chỉ demo **lớp giao thức** (không cần API key). Trong production, MCP kết hợp với Function Calling:
+CLI trong phần này minh họa luôn luồng MCP kết hợp với Gemini Function Calling:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -217,10 +241,10 @@ Ví dụ trên chỉ demo **lớp giao thức** (không cần API key). Trong pr
 │    │    "gọi get_weather(city='HN')"                     │
 │    │                                                     │
 │    ├─ 3. call_tool("get_weather") ──▶ MCP Server         │
-│    │◀── "HN: 29°C, mưa"                                  │
+│    │◀── JSON realtime từ WeatherAPI.com                   │
 │    │                                                     │
 │    ├─ 4. Gửi kết quả cho LLM tổng hợp                    │
-│    │◀── "HN 29°C, mưa, nhớ mang ô!"                      │
+│    │◀── Câu trả lời dựa trên JSON vừa nhận               │
 │    │                                                     │
 │    ▼                                                     │
 │  User nhận câu trả lời                                   │
