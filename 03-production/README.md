@@ -12,8 +12,9 @@
 
 | File | Vấn đề | Mô tả |
 |---|---|---|
-| `auth_server.py` | Auth | MCP server qua HTTP + `TokenVerifier` kiểm tra bearer token |
-| `auth_client.py` | Auth | Client gửi token qua `httpx.AsyncClient` |
+| `auth_server.py` | Auth | MCP weather server thật qua Streamable HTTP + bearer verifier |
+| `auth_client.py` | Auth | Positive/negative test cho token đúng, sai và thiếu |
+| `.env.example` | Auth | Mẫu token, weather key và URL; không chứa secret thật |
 | `registry.json` | Discovery | Tool Registry — danh mục tool-centric, agent tìm theo tag/keyword |
 | `registry_client.py` | Discovery | Agent tra cứu registry, chọn best match, tự kết nối |
 | `versioned_server.py` | Versioning | Server v2: giữ tool v1 (deprecated) + thêm v2 + resource metadata |
@@ -23,16 +24,62 @@
 
 ## 3a. Authentication
 
-Server chạy qua **Streamable HTTP** thay vì stdio, kèm bearer token verification.
+Server chạy qua **Streamable HTTP** thay vì stdio, kèm bearer-token verification.
+Nó công bố cùng hai tool thật như phần 02:
+
+| Tool | Input | Output |
+|---|---|---|
+| `get_weather` | `city: string` | JSON thời tiết hiện tại và địa điểm đã xác thực |
+| `get_weather_forecast` | `city: string`, `days: integer = 3` | JSON dự báo theo ngày |
+
+### Cấu hình
+
+```bash
+cd 03-production
+cp .env.example .env
+
+# Tạo MCP_AUTH_TOKEN mạnh rồi điền token và WEATHER_API_KEY vào .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Không dùng token mẫu trong production và không commit `.env`.
+
+### Khởi động server
 
 ```bash
 # Terminal 1 — khởi động server
 python auth_server.py
 # Server lắng nghe tại http://localhost:8000/mcp
+```
 
+### Test token đúng
+
+```bash
 # Terminal 2 — client kết nối kèm token
 python auth_client.py
 ```
+
+Kỳ vọng: in danh sách hai tool, gọi `get_weather("Hà Nội")` thành công và kết
+thúc bằng `PASS: token hợp lệ...`.
+
+### Test token sai
+
+```bash
+python auth_client.py --token definitely-wrong-token --expect-denied
+```
+
+Kỳ vọng: `PASS: server đã từ chối request (...)`. Nếu request được chấp nhận,
+client thoát mã 1 và in `FAIL`.
+
+### Test thiếu token
+
+```bash
+python auth_client.py --no-token --expect-denied
+```
+
+Kỳ vọng tương tự: server từ chối trước khi `list_tools`/`call_tool` được phép
+thực thi. HTTP status cụ thể có thể là 401 hoặc 403 tùy phiên bản MCP SDK; cả
+hai đều là kết quả từ chối hợp lệ.
 
 Luồng:
 
@@ -50,9 +97,40 @@ Client                                Server
 ```
 
 - Token hợp lệ → truy cập tool bình thường
-- Thiếu token → `401`
-- Token sai → `403`
+- Thiếu/sai token → `401` hoặc `403`, không được khám phá/gọi tool
 - Logic tool không biết gì về auth — SDK xử lý ở tầng transport
+
+### Đăng ký bản HTTP với Claude Code
+
+Khởi động `auth_server.py`, export token trong shell chạy Claude Code rồi thêm
+server HTTP:
+
+```bash
+claude mcp add --transport http \
+  --header "Authorization: Bearer YOUR_MCP_AUTH_TOKEN" \
+  weather-vietnam-secure http://localhost:8000/mcp
+
+claude mcp get weather-vietnam-secure
+```
+
+Để tránh token lưu trong shell history, ưu tiên `.mcp.json` dùng biến môi trường:
+
+```json
+{
+  "mcpServers": {
+    "weather-vietnam-secure": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Sau đó chạy `export MCP_AUTH_TOKEN=...`, mở Claude Code và dùng `/mcp` để xác
+nhận server kết nối và hiển thị hai tools.
 
 ---
 

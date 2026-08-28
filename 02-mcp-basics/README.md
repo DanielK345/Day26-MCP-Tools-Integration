@@ -52,6 +52,16 @@ hoặc nhấn `Ctrl+C`. Gõ `/tools` hay `/help` để xem lại khả năng.
 | `weather_client.py` | CLI chatbot Gemini, tự khám phá/chọn/gọi MCP tool qua stdio |
 | `.env.example` | Mẫu `GEMINI_API_KEY` và `WEATHER_API_KEY`, không chứa secret thật |
 
+## Công việc thực tế server giải quyết
+
+Weather MCP Server giúp chatbot/AI client tra cứu thời tiết Việt Nam mà không
+phải tự tích hợp từng weather provider. Một server duy nhất chịu trách nhiệm:
+
+- xác thực đúng địa danh Việt Nam và chuyển sang tọa độ;
+- lấy điều kiện thời tiết mới nhất phục vụ đi lại, tổ chức sự kiện hoặc vận hành;
+- lấy dự báo nhiều ngày để lập kế hoạch công tác/du lịch;
+- trả JSON có cấu trúc để Claude Code, Gemini hoặc client khác sử dụng lại.
+
 ## Hai tool thời tiết
 
 ### `get_weather(city)`
@@ -59,11 +69,51 @@ hoặc nhấn `Ctrl+C`. Gõ `/tools` hay `/help` để xem lại khả năng.
 Trả thời tiết hiện tại gồm thời điểm cập nhật, nhiệt độ/cảm giác như, tình
 trạng, độ ẩm, lượng mưa, mây, gió và UV.
 
+| Thành phần | Kiểu | Bắt buộc | Ví dụ/Mô tả |
+|---|---|---|---|
+| Input `city` | `string` | Có | `"Hà Nội"` |
+| Output | `object` | — | Địa điểm đã xác thực, thời gian cập nhật, nhiệt độ, mưa, gió, UV |
+
 ### `get_weather_forecast(city, days=3)`
 
 Trả dự báo từ 1–14 ngày. Mỗi ngày gồm nhiệt độ thấp nhất/cao nhất/trung bình,
 xác suất và tổng lượng mưa, độ ẩm, gió tối đa, UV, giờ mặt trời mọc/lặn. Số
 ngày thực tế khả dụng còn phụ thuộc gói WeatherAPI.com.
+
+| Thành phần | Kiểu | Bắt buộc | Ví dụ/Mô tả |
+|---|---|---|---|
+| Input `city` | `string` | Có | `"Đà Nẵng"` |
+| Input `days` | `integer` | Không | `3`, mặc định 3, miền hợp lệ 1–14 |
+| Output | `object` | — | Địa điểm, số ngày yêu cầu và mảng `dự_báo` theo từng ngày |
+
+Tool trả lỗi rõ ràng nếu thiếu key, địa danh không khớp Việt Nam, `days` không
+hợp lệ hoặc provider không phản hồi; không fallback sang dữ liệu mock.
+
+## Kiểm tra server và tool
+
+### Kiểm tra tự động, không gọi mạng
+
+```bash
+cd /đường/dẫn/tới/repository
+python -m unittest discover -s 02-mcp-basics -p 'test_*.py' -v
+```
+
+Kỳ vọng: 4 test pass, gồm current weather, forecast, validation `days` và phần
+chào/danh sách tool của CLI.
+
+### Kiểm tra thật qua MCP stdio
+
+```bash
+cd 02-mcp-basics
+python weather_client.py
+```
+
+1. Xác nhận lời chào liệt kê `get_weather` và `get_weather_forecast`.
+2. Nhập `Thời tiết Hà Nội hiện tại thế nào?`.
+3. Nhập `Dự báo Đà Nẵng 3 ngày tới`.
+4. Kiểm tra output có địa điểm/tọa độ đúng, thời gian cập nhật và dữ liệu khác
+   nhau theo từng thành phố/ngày.
+5. Gõ `thoát` để kết thúc.
 
 ---
 
@@ -259,11 +309,19 @@ CLI trong phần này minh họa luôn luồng MCP kết hợp với Gemini Func
 
 ## Đăng ký server với AI client
 
-**Claude Code** (làm 1 lần, dùng mãi):
+**Claude Code** (stdio, làm một lần):
 
 ```bash
-claude mcp add weather -- python /đường/dẫn/tới/weather_server.py
+claude mcp add --transport stdio weather-vietnam -- \
+  /đường/dẫn/tới/repository/.venv/bin/python \
+  /đường/dẫn/tới/repository/02-mcp-basics/weather_server.py
+
+claude mcp get weather-vietnam
 ```
+
+Server tự đọc `02-mcp-basics/.env`; không truyền secret trực tiếp trong command.
+Mở Claude Code và dùng `/mcp` để kiểm tra trạng thái/tool count, sau đó hỏi
+`Thời tiết Hà Nội hiện tại thế nào?`.
 
 **Gemini CLI**:
 

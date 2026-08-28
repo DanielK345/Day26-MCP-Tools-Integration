@@ -1,5 +1,7 @@
 # Phân biệt MCP và Function Calling
 
+> Checklist và bằng chứng nộp bài: [SUBMISSION.md](SUBMISSION.md)
+
 Đây là hai khái niệm hay bị nhầm lẫn nhưng thực ra ở **hai tầng khác nhau**, và **bổ sung cho nhau** chứ không thay thế.
 
 ## Cấu trúc repo
@@ -42,6 +44,7 @@ cd 01-function-calling && python weather_function_calling.py
 
 # Production — Auth (2 terminal)
 cd 03-production
+cp .env.example .env  # điền MCP_AUTH_TOKEN và WEATHER_API_KEY
 python auth_server.py              # terminal 1
 python auth_client.py              # terminal 2
 

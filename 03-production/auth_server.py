@@ -1,4 +1,4 @@
-"""MCP Server có Authentication — minh hoạ bảo mật cho production.
+"""MCP weather server qua Streamable HTTP, có bearer-token authentication.
 
 Server chạy qua HTTP (Streamable HTTP) thay vì stdio, kèm bearer token
 verification. Chỉ request mang token hợp lệ mới được phép khám phá và gọi tool.
@@ -18,54 +18,82 @@ Cách chạy:
 from __future__ import annotations
 
 import os
+import secrets
+import sys
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 
-# --- Token store (production: dùng DB, Redis, hoặc JWT verification) ---
-VALID_TOKENS: dict[str, str] = {
-    os.environ.get("MCP_AUTH_TOKEN", "dev-token-abc123"): "dev-user",
-    "prod-key-xyz789": "prod-service",
-}
+
+load_dotenv(Path(__file__).with_name(".env"))
+
+BASICS_DIR = Path(__file__).resolve().parents[1] / "02-mcp-basics"
+sys.path.insert(0, str(BASICS_DIR))
+from weather_api import (  # noqa: E402
+    get_current_weather_data,
+    get_weather_forecast_data,
+)
+
+
+def require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Thiếu {name} trong 03-production/.env")
+    return value
+
+
+SERVER_HOST = os.getenv("MCP_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("MCP_PORT", "8000"))
+PUBLIC_BASE_URL = os.getenv("MCP_PUBLIC_BASE_URL", f"http://localhost:{SERVER_PORT}")
 
 
 class StaticTokenVerifier(TokenVerifier):
-    """Kiểm tra bearer token dựa trên danh sách tĩnh.
+    """So sánh bearer token với secret cấu hình qua môi trường.
 
     Production nên thay bằng: JWT decode, OAuth introspection, hoặc
     gọi tới identity provider (Keycloak, Auth0, Google IAM, ...).
     """
 
+    def __init__(self, expected_token: str) -> None:
+        self.expected_token = expected_token
+
     async def verify_token(self, token: str) -> AccessToken | None:
-        client_id = VALID_TOKENS.get(token)
-        if client_id is None:
+        if not secrets.compare_digest(token, self.expected_token):
             return None
-        return AccessToken(token=token, client_id=client_id, scopes=["weather:read"])
+        return AccessToken(
+            token=token,
+            client_id="weather-client",
+            scopes=["weather:read"],
+        )
 
 
 # --- MCP Server — logic tool không biết gì về auth --------------------
 mcp = MCPServer(
     "weather-secure",
     auth=AuthSettings(
-        issuer_url="http://localhost:8000",
-        resource_server_url="http://localhost:8000",
+        issuer_url=PUBLIC_BASE_URL,
+        resource_server_url=PUBLIC_BASE_URL,
     ),
-    token_verifier=StaticTokenVerifier(),
+    token_verifier=StaticTokenVerifier(require_env("MCP_AUTH_TOKEN")),
 )
-
-_MOCK_DB = {
-    "Hanoi": "29°C, trời mưa",
-    "Haiphong": "33°C, mưa rào",
-    "Danang": "30°C, nhiều mây",
-}
 
 
 @mcp.tool()
-def get_weather(city: str) -> str:
-    """Lấy thời tiết hiện tại của một thành phố."""
-    return f"{city}: {_MOCK_DB.get(city, '28°C, không có dữ liệu chi tiết')}"
+def get_weather(city: str) -> dict[str, Any]:
+    """Lấy thời tiết hiện tại, realtime của một thành phố hoặc tỉnh Việt Nam."""
+    return get_current_weather_data(city)
+
+
+@mcp.tool()
+def get_weather_forecast(city: str, days: int = 3) -> dict[str, Any]:
+    """Dự báo thời tiết 1-14 ngày cho một thành phố hoặc tỉnh Việt Nam."""
+    return get_weather_forecast_data(city, days)
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+    mcp.run(transport="streamable-http", host=SERVER_HOST, port=SERVER_PORT)
