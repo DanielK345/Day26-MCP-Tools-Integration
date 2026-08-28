@@ -10,6 +10,7 @@ day26-mcp/
 ├── requirements.txt         ← pip install -r requirements.txt
 │
 ├── 01-function-calling/     ← Bước 1: Function Calling thuần (Gemini SDK)
+│   ├── .env.example
 │   ├── README.md
 │   └── weather_function_calling.py
 │
@@ -36,9 +37,10 @@ pip install -r requirements.txt
 # MCP demo (không cần API key)
 cd 02-mcp-basics && python weather_client.py
 
-# Function Calling (cần Gemini API key)
-export GEMINI_API_KEY=...
-cd 01-function-calling && python weather_function_calling.py
+# Function Calling (cần Gemini và WeatherAPI.com API key)
+cd 01-function-calling
+cp .env.example .env  # điền GEMINI_API_KEY và WEATHER_API_KEY
+python weather_function_calling.py
 
 # Production — Auth (2 terminal)
 cd 03-production

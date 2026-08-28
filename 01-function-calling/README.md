@@ -1,13 +1,17 @@
 # 01 — Function Calling thuần (Google Gemini SDK)
 
 Tool `get_weather` được **định nghĩa schema thủ công** và **thực thi ngay trong app**.
-Model chỉ quyết định gọi tool nào — app mới là nơi chạy.
+Model chỉ quyết định gọi tool nào — app gọi **WeatherAPI.com thật** để lấy dữ liệu
+hiện tại rồi gửi kết quả cho Gemini tổng hợp. Không còn bảng thời tiết mock.
 
 ```
 User hỏi  →  Model quyết định gọi get_weather(city="Hà Nội")
                      │
                      ▼
-              App TỰ THỰC THI hàm get_weather
+          Open-Meteo xác thực tên + lấy tọa độ VN
+                     │
+                     ▼
+              App gọi WeatherAPI.com bằng tọa độ
                      │
                      ▼
               Model tổng hợp câu trả lời
@@ -17,15 +21,49 @@ User hỏi  →  Model quyết định gọi get_weather(city="Hà Nội")
 
 ```bash
 pip install -r ../requirements.txt
-export GEMINI_API_KEY=...
+cp .env.example .env
+# Điền GEMINI_API_KEY và WEATHER_API_KEY vào .env
 python weather_function_calling.py
 ```
+
+Có thể truyền câu hỏi trực tiếp:
+
+```bash
+python weather_function_calling.py "Thời tiết Huế hiện tại thế nào?"
+```
+
+Lấy API key:
+
+- Gemini: <https://aistudio.google.com/app/apikey>
+- WeatherAPI.com: <https://www.weatherapi.com/signup.aspx>
+
+File `.env` đã được `.gitignore` loại trừ. Không commit hoặc in API key ra log.
+
+Ứng dụng không gửi thẳng tên có dấu sang WeatherAPI.com vì provider có thể
+fuzzy-match sai địa danh Việt Nam. Tên được chuẩn hóa và xác thực bằng
+[Open-Meteo Geocoding](https://open-meteo.com/en/docs/geocoding-api), chỉ nhận
+kết quả có `country_code=VN`; WeatherAPI.com sau đó nhận cặp vĩ độ/kinh độ.
 
 ## File
 
 | File | Mô tả |
 |---|---|
-| `weather_function_calling.py` | Định nghĩa schema, thực thi tool, gọi model Gemini, xử lý vòng lặp function calling |
+| `weather_function_calling.py` | Định nghĩa schema, gọi WeatherAPI.com, gọi Gemini và xử lý vòng lặp function calling |
+| `.env.example` | Mẫu tên biến môi trường, không chứa secret thật |
+
+## Một số weather API phù hợp cho địa điểm Việt Nam
+
+| Nhà cung cấp | Điểm phù hợp | Lưu ý |
+|---|---|---|
+| [WeatherAPI.com](https://www.weatherapi.com/docs/) | Current weather, hỗ trợ `lang=vi`; được dùng trong bài này sau bước định vị | Cần API key; không dùng trực tiếp tên có dấu để tránh fuzzy-match sai |
+| [OpenWeather](https://openweathermap.org/api/current) | Dữ liệu hiện tại toàn cầu, hệ sinh thái phổ biến | Nên geocode địa danh thành tọa độ trước; cần API key |
+| [Tomorrow.io](https://docs.tomorrow.io/reference/realtime-weather) | Realtime/hyperlocal và nhiều trường dữ liệu | Cần API key, hạn mức tùy gói |
+| [Open-Meteo](https://open-meteo.com/en/docs) | Miễn phí cho nhiều trường hợp phi thương mại, không bắt buộc key | Cần tọa độ; chủ yếu là dữ liệu mô hình/dự báo |
+
+Nếu cần bản tin chính thức trong nước, có thể tham khảo
+[Trung tâm Dự báo KTTV Quốc gia](https://nchmf.gov.vn/), nhưng cần kiểm tra thỏa
+thuận cung cấp dữ liệu/API riêng; website công khai không nên bị coi như một API
+ổn định để scraping.
 
 ---
 
@@ -58,8 +96,8 @@ User: "Thời tiết HN?"                     User: "Thời tiết HN?"
                                              ┌────────┐
                                              │ Model  │
                                              │ "HN:   │
-                                             │ 29°C,  │
-                                             │ mưa"   │
+                                             │ dữ liệu│
+                                             │ mới"   │
                                              └────────┘
 ```
 
@@ -113,20 +151,19 @@ Bước 4 — App TỰ THI HÀNH hàm get_weather
 
     App nhận yêu cầu → CHẠY hàm Python:
     ┌──────────────────────────────────────────┐
-    │  get_weather("Hà Nội")   → "29°C, mưa"   │ ← App chạy
-    │  get_weather("Đà Nẵng")  → "30°C, mây"   │ ← App chạy
+    │ get_weather("Hà Nội") → gọi WeatherAPI.com │ ← App chạy
+    │ get_weather("Đà Nẵng") → gọi WeatherAPI.com│ ← App chạy
     └──────────────────────────────────────────┘
 
 Bước 5 — Gửi kết quả lại cho model tổng hợp
 ════════════════════════════════════════════
 
     App ──────────────────────────────────────────▶ Gemini
-    │  Kết quả: HN 29°C mưa, ĐN 30°C mây         │
+    │  Kết quả JSON realtime từ WeatherAPI.com    │
     │                                            │
-    │  Gemini: "Hà Nội 29°C, mưa nhẹ 🌧️          │
-    │           nhớ mang ô nhé!                  │
-    │           Đà Nẵng 30°C, nhiều mây 🌤️       │
-    │           thời tiết dễ chịu!"              │
+    │  Gemini tạo câu trả lời từ đúng các trường │
+    │  nhiệt độ, mưa, độ ẩm và gió vừa nhận được │
+    │  (không dùng các con số viết sẵn trong app)│
 ```
 
 ---
@@ -156,8 +193,17 @@ get_weather_declaration = types.FunctionDeclaration(
 
 ```python
 # App phải CÓ hàm thật để chạy — model không chạy hàm này
-def get_weather(city: str) -> str:
-    return json.dumps({"city": city, "nhiệt_độ": "29°C", ...})
+def get_weather(city: str) -> dict:
+    location = geocode_vietnamese_city(city)
+    response = httpx.get(
+        "https://api.weatherapi.com/v1/current.json",
+        params={
+            "key": os.environ["WEATHER_API_KEY"],
+            "q": f"{location['latitude']},{location['longitude']}",
+            "lang": "vi",
+        },
+    )
+    return response.json()
 ```
 
 **Phần 3 — Vòng lặp** (nhận yêu cầu → chạy → trả lại):
